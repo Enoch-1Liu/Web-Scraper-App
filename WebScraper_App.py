@@ -25,53 +25,42 @@ def read_pdf_content(url):
             pdf_content = response.read()
         with fitz.open(stream=pdf_content) as doc:
             return "".join(page.get_text() for page in doc)
-    except Exception as e:
+    except Exception:
         return None
 
 def analyze_text_for_keywords(text, keywords):
     occurrences = {}
-    found_sentences = set()
-    sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=[.!?])\s+', text)
     for keyword in keywords:
-        count = 0
-        pattern = rf"\b{re.escape(keyword)}\b"
-        for sentence in sentences:
-            if re.search(pattern, sentence, re.IGNORECASE):
-                count += 1
-                found_sentences.add(sentence.strip())
+        count = len(re.findall(rf"\b{re.escape(keyword)}\b", text, re.IGNORECASE))
         if count > 0:
             occurrences[keyword] = count
-    return occurrences, list(found_sentences)
+    return occurrences
 
 
-# --- Streamlit UI ---
 
-st.title("🔍 PDF Keyword Extractor from URLs")
+st.title("PDF Keyword Extractor from URLs")
 
-# -- Input Choice: Keywords --
-st.subheader("📌 Keywords Input")
+# Keywords Input
+st.subheader("Keywords Input")
 keywords_mode = st.radio("Choose how to input keywords:", ["Upload .txt file", "Manually enter"], key="keywords_mode")
-
 if keywords_mode == "Upload .txt file":
     keyword_file = st.file_uploader("Upload keywords.txt", type="txt", key="kw_file")
     keywords_text = keyword_file.read().decode("utf-8") if keyword_file else ""
 else:
     keywords_text = st.text_area("Enter keywords (one per line):", height=150)
 
-# -- Input Choice: URLs --
-st.subheader("🔗 PDF URLs Input")
+# PDF URLs Input
+st.subheader("PDF URLs Input")
 url_mode = st.radio("Choose how to input PDF URLs:", ["Upload .txt file", "Manually enter"], key="url_mode")
-
 if url_mode == "Upload .txt file":
     url_file = st.file_uploader("Upload pdf_urls.txt", type="txt", key="url_file")
     urls_text = url_file.read().decode("utf-8") if url_file else ""
 else:
     urls_text = st.text_area("Enter PDF URLs (one per line):", height=150)
 
-# -- Input Choice: Company Names (optional) --
-st.subheader("🏢 Company Names Input (Optional)")
+# Company Names Input
+st.subheader("Company Names Input (Optional)")
 name_mode = st.radio("Choose how to input company names:", ["Upload .txt file", "Manually enter", "Skip"], key="name_mode")
-
 if name_mode == "Upload .txt file":
     name_file = st.file_uploader("Upload company_names.txt", type="txt", key="name_file")
     company_names_text = name_file.read().decode("utf-8") if name_file else ""
@@ -80,49 +69,56 @@ elif name_mode == "Manually enter":
 else:
     company_names_text = ""
 
-# -- Process Button --
-if st.button("🚀 Start Extraction"):
+# Year Input
+st.subheader("Year Input (Optional)")
+year_mode = st.radio("Choose how to input years:", ["Upload .txt file", "Manually enter", "Skip"], key="year_mode")
+if year_mode == "Upload .txt file":
+    year_file = st.file_uploader("Upload years.txt", type="txt", key="year_file")
+    years_text = year_file.read().decode("utf-8") if year_file else ""
+elif year_mode == "Manually enter":
+    years_text = st.text_area("Enter years (one per line):", height=150)
+else:
+    years_text = ""
+
+# Process
+if st.button("Start Extraction"):
     if not keywords_text or not urls_text:
         st.error("Please provide both keywords and URLs.")
     else:
         keywords = extract_keywords(keywords_text)
         urls = [u.strip() for u in urls_text.splitlines() if u.strip()]
         companies = [c.strip() for c in company_names_text.splitlines() if c.strip()] if company_names_text else None
+        years = [y.strip() for y in years_text.splitlines() if y.strip()] if years_text else None
 
         if companies and len(companies) != len(urls):
-            st.warning("⚠️ Number of company names doesn't match number of URLs. Using filenames where necessary.")
+            st.warning("Number of company names does not match number of URLs. Using filenames where needed.")
+        if years and len(years) != len(urls):
+            st.warning("Number of years does not match number of URLs. Skipping year info for unmatched entries.")
 
         results = []
-        all_sentences = set()
         progress_bar = st.progress(0)
 
         for i, url in enumerate(urls):
-            st.write(f"🔍 Processing {i+1}/{len(urls)}: {url}")
+            st.write(f"Processing {i+1}/{len(urls)}: {url}")
             text = read_pdf_content(url)
             name = companies[i] if companies and i < len(companies) else extract_filename(url)
+            year = years[i] if years and i < len(years) else ""
 
             if text:
-                occurrences, sentences = analyze_text_for_keywords(text, keywords)
+                occurrences = analyze_text_for_keywords(text, keywords)
+                base_record = {"URL": url, "Name": name, "Year": year}
                 if occurrences:
-                    results.append({"URL": url, "Name": name, **occurrences})
+                    results.append({**base_record, **occurrences})
                 else:
-                    results.append({"URL": url, "Name": name, "Note": "No keywords found."})
-                all_sentences.update(sentences)
+                    results.append({**base_record, "Note": "No keywords found."})
             else:
-                results.append({"URL": url, "Name": name, "Error": "❌ Failed to read PDF."})
+                results.append({"URL": url, "Name": name, "Year": year, "Error": "Failed to read PDF."})
 
             progress_bar.progress((i + 1) / len(urls))
 
-        # Display & Download
         df = pd.DataFrame(results)
-        st.subheader("📊 Keyword Count Results")
+        st.subheader("Keyword Count Results")
         st.dataframe(df)
 
         csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download Results (CSV)", csv, "keyword_results.csv", "text/csv")
-
-        if all_sentences:
-            st.subheader("📝 Extracted Sentences with Keywords")
-            full_text = "\n\n".join(all_sentences)
-            st.text_area("Sentences:", value=full_text, height=300)
-            st.download_button("⬇️ Download Sentences", full_text.encode("utf-8"), "keyword_sentences.txt", "text/plain")
+        st.download_button("Download Results (CSV)", csv, "keyword_results.csv", "text/csv")
