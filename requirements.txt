@@ -1,5 +1,4 @@
 ﻿streamlit
 pymupdf
 pandas
-urllib
 certifi
